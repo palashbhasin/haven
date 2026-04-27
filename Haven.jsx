@@ -29,6 +29,9 @@ const Haven = () => {
 
   const [havenOnInbox, setHavenOnInbox] = useState(true);
 
+  const [userGuess, setUserGuess] = useState(null); // 'scam' | 'safe' | null
+  const [revealed, setRevealed] = useState(false);
+
   const scenarios = [
     {
       id: 'usps',
@@ -107,58 +110,93 @@ const Haven = () => {
   const scamScenarios = scenarios.filter(s => s.type === 'scam');
   const safeScenarios = scenarios.filter(s => s.type === 'safe');
 
-  const runScenario = async (scenario) => {
+  // Pre-baked verdicts so the demo works on any host (no backend required).
+  const verdictsById = {
+    'usps': {
+      verdict: 'scam',
+      confidence: 'high',
+      headline: "This isn't really USPS.",
+      explanation: "USPS doesn't text you to fix an address — they leave a paper slip at your door. The link goes to a lookalike site that's trying to grab your card number. The 'Reply Y' trick is just to confirm your phone is active.",
+      action: "Don't tap the link. Delete the text. If you're expecting a package, check the tracking number directly at usps.com.",
+      red_flags: ["usps-redelivery.info", "asks to update info via link", "Reply Y to confirm", "urgency about delivery"],
+    },
+    'puppy': {
+      verdict: 'scam',
+      confidence: 'high',
+      headline: "This is a puppy scam. There is no Bella.",
+      explanation: "Real breeders don't accept gift cards — ever. The pressure to pay before another family takes her is the oldest trick in the book. The photos were almost certainly stolen from another website.",
+      action: "Stop talking to this seller. If you want a puppy, visit a local shelter or breeder in person before paying anything.",
+      red_flags: ["gift cards accepted", "special pet courier", "pressure to pay fast", "shipping a puppy sight-unseen"],
+    },
+    'grandson': {
+      verdict: 'scam',
+      confidence: 'high',
+      headline: "Your grandson did not send this.",
+      explanation: "This is the 'grandparent scam.' They count on you panicking and not calling anyone to check. The 'don't tell anyone' line is the giveaway — it's there to keep you from picking up the phone.",
+      action: "Don't send anything. Call your grandson directly on his real number. If you can't reach him, call his parents. He is fine.",
+      red_flags: ["don't tell anyone", "gift cards", "urgency", "unknown number", "claims to be in jail"],
+    },
+    'amazon-scam': {
+      verdict: 'scam',
+      confidence: 'high',
+      headline: "That phone number is not Amazon.",
+      explanation: "Amazon never asks you to call a phone number to dispute a charge — you do it inside the app or on the website. If you call, they'll ask for your card 'to reverse the charge' and steal it instead.",
+      action: "Don't call the number. Open the Amazon app yourself and check your real orders. There's no $849 charge.",
+      red_flags: ["call to reverse charge", "1-888 phone number", "large unexpected charge", "fake order number"],
+    },
+    'amazon-real': {
+      verdict: 'safe',
+      confidence: 'high',
+      headline: "This looks like a normal Amazon shipping update.",
+      explanation: "It points you back to amazon.com and the Amazon app — which is what real Amazon does. There's no link to click, no number to call, no urgency. Just a delivery date.",
+      action: "Nothing to do. Track the package in the Amazon app whenever you like.",
+      red_flags: [],
+    },
+    'pharmacy': {
+      verdict: 'safe',
+      confidence: 'high',
+      headline: "This is a real pharmacy reminder.",
+      explanation: "Walgreens sends these when a prescription is filled. There's no link, no payment request, and the opt-out instructions are exactly what real pharmacy texts include.",
+      action: "Pick up the prescription whenever it's convenient. No action needed on the text.",
+      red_flags: [],
+    },
+  };
+
+  const runScenario = (scenario) => {
     setActiveScenario(scenario);
     setBannerShown(false);
     setVerdict(null);
     setError('');
-    setLoading(true);
-    if (scenario.type === 'scam') {
-      setTimeout(() => setBannerShown(true), 850);
-    }
-
-    const systemPrompt = `You are Haven's scam detection engine. You protect people from scams, frauds, and phishing attempts.
-
-Analyze the message below. Return ONLY a valid JSON object — no preamble, no markdown code fences, no commentary.
-
-Schema:
-{
-  "verdict": "scam" | "suspicious" | "safe",
-  "confidence": "high" | "medium" | "low",
-  "headline": "one short sentence, plain English, no jargon",
-  "explanation": "2-3 short sentences explaining why, written warmly like a kind family member. Simple words.",
-  "action": "one specific concrete step to take right now",
-  "red_flags": ["short", "phrases", "from the message that raised concern. Empty array if safe."]
-}
-
-Rules:
-- Default to caution. If unsure, use "suspicious" not "safe".
-- Legitimate messages from real companies (shipping notices, prescription reminders, appointment confirmations) should be "safe".
-- Avoid jargon like "phishing", "credentials". Write plainly.
-- Short sentences. Warm tone, not alarming.`;
-
-    try {
-      const text = await window.claude.complete({
-        messages: [
-          { role: "user", content: `${systemPrompt}\n\nMessage to analyze:\n"""\n${scenario.bodyText}\n"""` }
-        ],
-      });
-      const clean = String(text).replace(/```json|```/g, '').trim();
-      // Pull JSON object out even if model adds preamble
-      const match = clean.match(/\{[\s\S]*\}/);
-      setVerdict(JSON.parse(match ? match[0] : clean));
-    } catch (e) {
-      setError("Couldn't analyze right now. Try another scenario.");
-    } finally {
-      setLoading(false);
-    }
+    setLoading(false);
+    setUserGuess(null);
+    setRevealed(false);
   };
 
-  // Auto-play the first scam scenario so the demo isn't dead on arrival
+  const analyzeWithHaven = () => {
+    if (!activeScenario || loading || revealed) return;
+    setLoading(true);
+    setError('');
+    if (activeScenario.type === 'scam') {
+      setTimeout(() => setBannerShown(true), 850);
+    }
+    const delay = 1100 + Math.random() * 700;
+    setTimeout(() => {
+      const v = verdictsById[activeScenario.id];
+      if (v) {
+        setVerdict(v);
+        setRevealed(true);
+      } else {
+        setError("Couldn't analyze right now. Try another scenario.");
+      }
+      setLoading(false);
+    }, delay);
+  };
+
+  // Auto-load the first scenario so the demo isn't dead on arrival (no auto-analyze)
   useEffect(() => {
     const t = setTimeout(() => {
       if (!activeScenario) runScenario(scamScenarios[0]);
-    }, 1800);
+    }, 1200);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -293,72 +331,39 @@ Rules:
       <section id="demo-section" className="bg-[#EFE9DD] py-24 relative">
         <div className="absolute inset-0 grain opacity-50 pointer-events-none" />
         <div className="max-w-6xl mx-auto px-6 relative">
-          <div className="text-[11px] tracking-[0.2em] text-[#2D4A3E] mb-6">WATCH IT HAPPEN</div>
+          <div className="text-[11px] tracking-[0.2em] text-[#2D4A3E] mb-6">CAN YOU SPOT IT?</div>
           <h2 className="font-display text-4xl md:text-5xl font-light leading-tight mb-4">
-            See Haven at work.<br />
-            <span className="italic">Live AI. Real messages.</span>
+            Try it yourself.<br />
+            <span className="italic">Or let Haven decide.</span>
           </h2>
           <p className="text-[#1A1F1C]/60 text-lg mb-10 max-w-2xl">
-            Some of these are real. Some are scams. Pick any one — Haven has to figure it out with no cheating.
+            Six real-looking messages. Some are scams. Some aren't. Pick one, take your guess, then see if Haven agrees.
           </p>
 
-          {/* Labeled rows: Scams vs Real */}
-          <div className="space-y-5 mb-10">
-            <div>
-              <div className="flex items-center gap-2 mb-2.5">
-                <AlertTriangle className="w-3.5 h-3.5 text-[#B8352A]" strokeWidth={2.5} />
-                <span className="text-[10px] tracking-[0.18em] font-semibold text-[#B8352A]">SCAMS</span>
-              </div>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
-                {scamScenarios.map((s) => {
-                  const active = activeScenario?.id === s.id;
-                  return (
-                    <button
-                      key={s.id}
-                      onClick={() => runScenario(s)}
-                      className={`text-left p-3.5 rounded-xl border transition-all ${
-                        active
-                          ? 'bg-[#1A1F1C] text-[#F5F1E8] border-[#1A1F1C] shadow-md'
-                          : 'bg-white border-[#B8352A]/15 hover:border-[#B8352A] hover:-translate-y-0.5'
-                      }`}
-                    >
-                      <div className={`text-[10px] tracking-wider mb-1 ${active ? 'text-[#C97B5A]' : 'text-[#1A1F1C]/40'}`}>
-                        {s.channel.toUpperCase()}
-                      </div>
-                      <div className="font-medium text-[14px] leading-tight">{s.label}</div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div>
-              <div className="flex items-center gap-2 mb-2.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-[#2D4A3E]" strokeWidth={2.5} />
-                <span className="text-[10px] tracking-[0.18em] font-semibold text-[#2D4A3E]">REAL MESSAGES</span>
-              </div>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
-                {safeScenarios.map((s) => {
-                  const active = activeScenario?.id === s.id;
-                  return (
-                    <button
-                      key={s.id}
-                      onClick={() => runScenario(s)}
-                      className={`text-left p-3.5 rounded-xl border transition-all ${
-                        active
-                          ? 'bg-[#1A1F1C] text-[#F5F1E8] border-[#1A1F1C] shadow-md'
-                          : 'bg-white border-[#2D4A3E]/15 hover:border-[#2D4A3E] hover:-translate-y-0.5'
-                      }`}
-                    >
-                      <div className={`text-[10px] tracking-wider mb-1 ${active ? 'text-[#C97B5A]' : 'text-[#1A1F1C]/40'}`}>
-                        {s.channel.toUpperCase()}
-                      </div>
-                      <div className="font-medium text-[14px] leading-tight">{s.label}</div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
+          {/* Unlabeled grid — no more spoilers */}
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2.5 mb-10">
+            {scenarios.map((s) => {
+              const active = activeScenario?.id === s.id;
+              return (
+                <button
+                  key={s.id}
+                  onClick={() => runScenario(s)}
+                  className={`text-left p-3.5 rounded-xl border transition-all ${
+                    active
+                      ? 'bg-[#1A1F1C] text-[#F5F1E8] border-[#1A1F1C] shadow-md'
+                      : 'bg-white border-[#1A1F1C]/10 hover:border-[#1A1F1C]/40 hover:-translate-y-0.5'
+                  }`}
+                >
+                  <div className={`text-[10px] tracking-wider mb-1 ${active ? 'text-[#C97B5A]' : 'text-[#1A1F1C]/40'}`}>
+                    {s.channel.toUpperCase()}
+                  </div>
+                  <div className="font-medium text-[13px] leading-tight truncate">{s.sender}</div>
+                  <div className={`text-[11px] mt-1 leading-snug ${active ? 'text-[#F5F1E8]/60' : 'text-[#1A1F1C]/45'}`}>
+                    {s.preview}
+                  </div>
+                </button>
+              );
+            })}
           </div>
 
           <div className="grid md:grid-cols-[320px_1fr] gap-8 lg:gap-12 items-start">
@@ -368,9 +373,53 @@ Rules:
             <div className="min-h-[200px]">
               {!activeScenario && (
                 <div className="p-8 rounded-2xl border border-dashed border-[#1A1F1C]/15 text-center text-sm text-[#1A1F1C]/50 bg-white/40">
-                  Tap any message above to see Haven's live AI analysis.
+                  Tap any message above to begin.
                 </div>
               )}
+
+              {/* Guess phase: scenario picked, not yet revealed */}
+              {activeScenario && !revealed && !loading && (
+                <div className="anim-fade-up space-y-5">
+                  <div className="bg-white rounded-2xl border border-[#1A1F1C]/10 p-6 shadow-sm">
+                    <div className="text-[10px] tracking-[0.18em] font-semibold text-[#1A1F1C]/50 mb-3">YOUR TURN</div>
+                    <div className="font-display text-2xl leading-tight mb-2">What do you think?</div>
+                    <p className="text-[15px] text-[#1A1F1C]/65 leading-relaxed mb-5">
+                      Read the message on the phone. Make a call before Haven does.
+                    </p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <button
+                        onClick={() => setUserGuess('scam')}
+                        className={`px-4 py-3.5 rounded-xl border text-[14px] font-medium transition-all ${
+                          userGuess === 'scam'
+                            ? 'bg-[#B8352A] text-white border-[#B8352A]'
+                            : 'bg-white border-[#1A1F1C]/15 hover:border-[#B8352A] hover:text-[#B8352A]'
+                        }`}
+                      >
+                        It's a scam
+                      </button>
+                      <button
+                        onClick={() => setUserGuess('safe')}
+                        className={`px-4 py-3.5 rounded-xl border text-[14px] font-medium transition-all ${
+                          userGuess === 'safe'
+                            ? 'bg-[#2D4A3E] text-white border-[#2D4A3E]'
+                            : 'bg-white border-[#1A1F1C]/15 hover:border-[#2D4A3E] hover:text-[#2D4A3E]'
+                        }`}
+                      >
+                        Looks safe
+                      </button>
+                    </div>
+                  </div>
+                  <button
+                    onClick={analyzeWithHaven}
+                    className="w-full inline-flex items-center justify-center gap-2 text-[15px] font-medium px-6 py-4 rounded-full bg-[#1A1F1C] text-[#F5F1E8] hover:bg-[#2D4A3E] transition-colors shadow-sm"
+                  >
+                    <Shield className="w-4 h-4" strokeWidth={2.2} />
+                    {userGuess ? 'Now let Haven analyze' : 'Skip — let Haven analyze'}
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+
               {loading && (
                 <div className="p-6 rounded-2xl bg-white border border-[#1A1F1C]/10 flex items-center gap-3 text-sm text-[#1A1F1C]/60 shadow-sm">
                   <Loader2 className="w-4 h-4 animate-spin text-[#2D4A3E]" />
@@ -380,8 +429,13 @@ Rules:
               {error && (
                 <div className="p-4 rounded-2xl bg-[#B8352A]/10 text-[#B8352A] text-sm">{error}</div>
               )}
-              {verdict && !loading && (
-                <div className="anim-fade-up">
+
+              {/* Reveal phase: show whether the user was right, then the verdict */}
+              {verdict && revealed && !loading && (
+                <div className="anim-fade-up space-y-4">
+                  {userGuess && (
+                    <GuessResult userGuess={userGuess} actual={verdict.verdict} />
+                  )}
                   <VerdictCard verdict={verdict} />
                 </div>
               )}
@@ -645,6 +699,34 @@ const ScenarioPhone = ({ scenario, bannerShown }) => (
     </div>
   </div>
 );
+
+const GuessResult = ({ userGuess, actual }) => {
+  const guessedScam = userGuess === 'scam';
+  const isScam = actual === 'scam' || actual === 'suspicious';
+  const correct = guessedScam === isScam;
+  return (
+    <div className={`rounded-2xl p-5 border ${correct ? 'bg-[#2D4A3E]/8 border-[#2D4A3E]/25' : 'bg-[#C97B5A]/10 border-[#C97B5A]/30'}`}>
+      <div className="flex items-start gap-3">
+        <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${correct ? 'bg-[#2D4A3E]' : 'bg-[#C97B5A]'}`}>
+          {correct
+            ? <CheckCircle2 className="w-5 h-5 text-white" strokeWidth={2.2} />
+            : <AlertTriangle className="w-5 h-5 text-white" strokeWidth={2.2} />}
+        </div>
+        <div>
+          <div className={`text-[10px] tracking-[0.18em] font-semibold mb-1 ${correct ? 'text-[#2D4A3E]' : 'text-[#C97B5A]'}`}>
+            {correct ? 'YOU GOT IT' : 'GOOD CATCH BY HAVEN'}
+          </div>
+          <div className="text-[15px] text-[#1A1F1C]/85 leading-snug">
+            You guessed <span className="font-medium">{guessedScam ? "it's a scam" : 'looks safe'}</span>
+            {correct
+              ? '. Haven agrees.'
+              : `. Haven actually thinks it's ${isScam ? 'a scam' : 'safe'} — here's why.`}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const VerdictCard = ({ verdict }) => {
   const config = {
